@@ -1,109 +1,95 @@
 package main
 
 import (
+	"algo-design/internal/ospf"
 	"fmt"
-	"strconv"
+	"net"
 )
 
-func binaryResult(num int) string {
-	if num == 0 {
-		return "0"
-	}
-
-	binary := ""
-
-	for num > 0 {
-		remainder := num % 2
-		binary = strconv.Itoa(remainder) + binary
-		num = num / 2
-	}
-
-	return binary
-}
-
-func linearPatternMatch(text, pattern string) {
-	N := len(text)
-	M := len(pattern)
-	found := false
-
-	for i := 0; i <= N-M; i++ {
-		match := true
-		for j := 0; j < M; j++ {
-			if text[i+j] != pattern[j] {
-				match = false
-				break
-			}
-		}
-		if match {
-			fmt.Printf("Pattern found at index %d\n", i)
-			found = true
-		}
-	}
-
-	if !found {
-		fmt.Println("Pattern not found in the text.")
-	}
-}
-
-// checkGraphProperties checks the three properties of the graph
-func checkGraphProperties(adjMatrix [][]int) (isComplete bool, hasSelfLoop bool, hasIsolatedVertex bool) {
-	N := len(adjMatrix)
-	isComplete = true
-	hasSelfLoop = false
-	hasIsolatedVertex = false
-
-	for i := 0; i < N; i++ {
-		rowSum := 0
-		for j := 0; j < N; j++ {
-			if i == j && adjMatrix[i][j] == 1 {
-				hasSelfLoop = true
-			}
-			if i != j && adjMatrix[i][j] == 0 {
-				isComplete = false
-			}
-			rowSum += adjMatrix[i][j]
-		}
-		if rowSum == 0 {
-			hasIsolatedVertex = true
-		}
-	}
-
-	return
-}
-
 func main() {
-	var num int
-	fmt.Print("Enter a decimal number: ")
-	_, err := fmt.Scan(&num)
-	if err != nil {
-		return
+	routerA := &ospf.Router{
+		LoopbackIPs:  []net.IP{net.ParseIP("192.168.0.1")},
+		InterfaceIPs: []net.IP{net.ParseIP("10.1.1.1"), net.ParseIP("172.16.1.1")},
+		Links:        make(map[string]*ospf.Link),
+		Area:         "0",
+		LSDB:         make(map[string]*ospf.LSA),
+		OSPFPriority: 10,
 	}
-	binary := binaryResult(num)
-	fmt.Printf("The binary equivalent of %d is %s\n", num, binary)
+	routerA.ID = "1.1.1.1"
 
-	var text, pattern string
+	routerB := &ospf.Router{
+		LoopbackIPs:  []net.IP{net.ParseIP("192.168.0.2")},
+		InterfaceIPs: []net.IP{net.ParseIP("10.1.1.2")},
+		Links:        make(map[string]*ospf.Link),
+		Area:         "0",
+		LSDB:         make(map[string]*ospf.LSA),
+		OSPFPriority: 5,
+	}
+	routerB.ID = ospf.DetermineRouterID(routerB)
 
-	// Prompt the user for input
-	fmt.Print("Enter the text: ")
-	fmt.Scanln(&text)
-	fmt.Print("Enter the pattern to search for: ")
-	fmt.Scanln(&pattern)
+	routerC := &ospf.Router{
+		LoopbackIPs:  nil, // No loopback IP
+		InterfaceIPs: []net.IP{net.ParseIP("10.1.1.3"), net.ParseIP("172.16.1.3")},
+		Links:        make(map[string]*ospf.Link),
+		Area:         "0",
+		LSDB:         make(map[string]*ospf.LSA),
+		OSPFPriority: 1,
+	}
+	routerC.ID = ospf.DetermineRouterID(routerC)
 
-	// Perform the pattern search
-	linearPatternMatch(text, pattern)
+	routers := []*ospf.Router{routerA, routerB, routerC}
+	dr, bdr := ospf.ElectDRAndBDR(routers)
 
-	// Example adjacency matrix
-	adjMatrix := [][]int{
-		{0, 1, 1},
-		{1, 0, 1},
-		{1, 1, 0},
+	fmt.Printf("Elected DR: %s with ID %s\n", dr.ID, dr.ID)
+	fmt.Printf("Elected BDR: %s with ID %s\n", bdr.ID, bdr.ID)
+
+	// Assume bandwidth in bps (e.g., 100Mbps)
+	// Define links with bandwidths and network CIDRs
+	routerA.Links[routerB.ID] = &ospf.Link{To: routerB, Bandwidth: 100e6, Network: "10.1.1.0/24"} // 100 Mbps
+	routerB.Links[routerA.ID] = &ospf.Link{To: routerA, Bandwidth: 100e6, Network: "10.1.1.0/24"} // 100 Mbps
+
+	routerB.Links[routerC.ID] = &ospf.Link{To: routerC, Bandwidth: 10e6, Network: "10.1.2.0/24"} // 10 Mbps
+	routerC.Links[routerB.ID] = &ospf.Link{To: routerB, Bandwidth: 10e6, Network: "10.1.2.0/24"} // 10 Mbps
+
+	routerA.Links[routerC.ID] = &ospf.Link{To: routerC, Bandwidth: 1e6, Network: "10.1.3.0/24"} // 1 Mbps
+	routerC.Links[routerA.ID] = &ospf.Link{To: routerA, Bandwidth: 1e6, Network: "10.1.3.0/24"} // 1 Mbps
+
+	area0 := &ospf.Area{
+		ID: "0",
+		Routers: map[string]*ospf.Router{
+			routerA.ID: routerA,
+			routerB.ID: routerB,
+			routerC.ID: routerC,
+		},
 	}
 
-	// Check the properties of the graph
-	isComplete, hasSelfLoop, hasIsolatedVertex := checkGraphProperties(adjMatrix)
+	network := &ospf.Network{
+		Routers: map[string]*ospf.Router{
+			routerA.ID: routerA,
+			routerB.ID: routerB,
+			routerC.ID: routerC,
+		},
+		Areas: map[string]*ospf.Area{
+			"0": area0,
+		},
+	}
 
-	// Output the results
-	fmt.Printf("Graph is complete: %v\n", isComplete)
-	fmt.Printf("Graph has a self-loop: %v\n", hasSelfLoop)
-	fmt.Printf("Graph has an isolated vertex: %v\n", hasIsolatedVertex)
+	for _, router := range network.Routers {
+		router.GenerateLSA()
+	}
+
+	area0.FloodLSAs()
+
+	dist := ospf.DijkstraWithMultiPath(network, routerA.ID, "0")
+	// Output the results including costs, router IDs, and network CIDRs
+	for routerID, cost := range dist {
+		if routerID != routerA.ID {
+			for _, link := range routerA.Links {
+				if link.To.ID == routerID {
+					fmt.Printf("Cost from %s to %s: %f (Network: %s)\n", routerA.ID, routerID, cost, link.Network)
+				}
+			}
+		}
+	}
+
 }
